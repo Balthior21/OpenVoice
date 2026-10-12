@@ -23,7 +23,9 @@ from pathlib import Path
 
 # Le texte que la voix doit dire
 #TEXTE = "Bonjour, ceci est un test de ma voix clonée avec OpenVoice."
-TEXTE = "Bonjour, ceci est un test de ma voix clonée avec OpenVoice."
+TEXTE = """  Mon cavalier me fait une cour assidue et convaincante depuis le début de la soirée. Cela n'est pas pour me déplaire. Il doit avoir dix-neuf ans, tout au plus, il est donc de dix ans mon cadet.
+J'ai fait sa connaissance par l'intermédiaire de mes voisins de Mobil-Home qui me l'ont recommandé pour l'exécution de menus travaux et autres corvées ménagères. Il gagne ainsi quelque argent de poche pendant les vacances. La première fois que je l'ai prié de venir m'aider, il s'est consacré au lavage de ma voiture. 
+D'autres fois, il a démoussé le toit de mon Mobil-Home ou lessivé ses parois extérieures ou désherbé mes parterres de fleurs."""
 
 
 # Langue du texte : "FR", "EN", "ES", "ZH" ou "JP"
