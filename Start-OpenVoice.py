@@ -1,12 +1,15 @@
+# pyright: reportMissingImports=false
 """
 Lanceur OpenVoice V2 (Start-OpenVoice.py)
 
 - Se relance automatiquement dans l'environnement conda "openvoice".
+- Configure VS Code pour utiliser ce bon environnement (une seule fois).
 - Vérifie les prérequis (bibliothèques, GPU, données NLTK).
 - Génère un fichier audio dans le dossier outputs_v2.
 """
 
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -90,6 +93,31 @@ os.chdir(DOSSIER_SCRIPT)
 warnings.filterwarnings("ignore", message=".*urllib3.*")
 
 
+def configurer_vscode():
+    """Indique à VS Code le bon Python pour ce dossier (.vscode/settings.json).
+    Les réglages déjà présents sont conservés."""
+    dossier = DOSSIER_SCRIPT / ".vscode"
+    fichier = dossier / "settings.json"
+    python_env = str(Path(sys.executable))
+    donnees = {}
+    if fichier.exists():
+        try:
+            donnees = json.loads(fichier.read_text(encoding="utf-8"))
+        except Exception:
+            return  # fichier existant illisible : on n'y touche pas
+    if donnees.get("python.defaultInterpreterPath") == python_env:
+        return
+    donnees["python.defaultInterpreterPath"] = python_env
+    try:
+        dossier.mkdir(exist_ok=True)
+        fichier.write_text(json.dumps(donnees, indent=4), encoding="utf-8")
+        print("Configuration VS Code mise à jour.")
+        print("  Pour supprimer les soulignements : Ctrl+Maj+P, puis "
+              "'Developer: Reload Window' (une seule fois).\n")
+    except Exception as e:
+        print(f"Avertissement : configuration VS Code impossible ({e})")
+
+
 def verifier_prerequis():
     """Vérifie bibliothèques, GPU, modèles et données NLTK."""
     # 1. Bibliothèques
@@ -144,6 +172,7 @@ def verifier_prerequis():
 
 
 def main():
+    configurer_vscode()
     verifier_prerequis()
 
     import torch
