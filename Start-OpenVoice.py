@@ -29,7 +29,7 @@ LANGUE = "FR"
 
 # Fichier audio de la voix à copier (mp3 ou wav, 10 à 30 secondes, propre,
 # sans musique ni bruit). Chemin relatif au dossier OpenVoice.
-VOIX_REFERENCE = "resources/example_reference.mp3"
+VOIX_REFERENCE = "resources/Voix-Soph.mp3"
 
 # Vitesse de parole : 1.0 = normal, 0.8 = plus lent, 1.2 = plus rapide
 VITESSE = 1.0
