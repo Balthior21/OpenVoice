@@ -49,6 +49,12 @@ ENV_NAME = "openvoice"
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
 
+# Réduit le bruit dans le terminal
+os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+
 
 def dans_le_bon_env():
     return Path(sys.prefix).name.lower() == ENV_NAME.lower()
@@ -90,7 +96,6 @@ relancer_si_necessaire()
 
 # À partir d'ici, on est sûr d'être dans l'environnement openvoice
 os.chdir(DOSSIER_SCRIPT)
-warnings.filterwarnings("ignore", message=".*urllib3.*")
 
 
 def configurer_vscode():
@@ -116,6 +121,19 @@ def configurer_vscode():
               "'Developer: Reload Window' (une seule fois).\n")
     except Exception as e:
         print(f"Avertissement : configuration VS Code impossible ({e})")
+
+
+def forcer_whisper_cpu(se_extractor):
+    """L'analyse de la voix de référence (Whisper) tourne sur le processeur.
+    Évite l'erreur 'cudnn_ops_infer64_8.dll' sous Windows. Le reste
+    (génération et conversion de la voix) reste sur le GPU."""
+    original = se_extractor.WhisperModel
+
+    class WhisperCPU(original):
+        def __init__(self, model_size_or_path, *args, **kwargs):
+            super().__init__(model_size_or_path, device="cpu", compute_type="int8")
+
+    se_extractor.WhisperModel = WhisperCPU
 
 
 def verifier_prerequis():
@@ -180,6 +198,8 @@ def main():
     from openvoice.api import ToneColorConverter
     from melo.api import TTS
 
+    forcer_whisper_cpu(se_extractor)
+
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     os.makedirs(DOSSIER_SORTIE, exist_ok=True)
 
@@ -191,6 +211,7 @@ def main():
 
     # --- Analyse de votre voix de référence ------------------------
     print(f"Analyse de la voix de référence : {VOIX_REFERENCE}")
+    print("  (étape sur processeur : quelques dizaines de secondes la 1re fois)")
     target_se, _ = se_extractor.get_se(VOIX_REFERENCE, converter, vad=False)
 
     # --- Synthèse de la voix de base (MeloTTS) ---------------------
