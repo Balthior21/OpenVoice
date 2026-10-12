@@ -1,15 +1,17 @@
 """
-Lanceur simple pour OpenVoice V2.
+Lanceur OpenVoice V2 (Start-OpenVoice.py)
 
-Mode d'emploi :
-  1. Modifiez les PARAMETRES ci-dessous.
-  2. Cliquez sur le bouton ▶ (Run Python File) en haut à droite de VS Code.
-  3. Le fichier audio est créé dans le dossier outputs_v2.
+- Se relance automatiquement dans l'environnement conda "openvoice".
+- Vérifie les prérequis (bibliothèques, GPU, données NLTK).
+- Génère un fichier audio dans le dossier outputs_v2.
 """
 
+import importlib.util
 import os
+import subprocess
 import sys
 import time
+import warnings
 from pathlib import Path
 
 # =====================================================================
@@ -19,7 +21,7 @@ from pathlib import Path
 # Le texte que la voix doit dire
 TEXTE = "Bonjour, ceci est un test de ma voix clonée avec OpenVoice."
 
-# Langue du texte : "FR", "EN", "ES", "ZH", "JP" ou "KR"
+# Langue du texte : "FR", "EN", "ES", "ZH" ou "JP"
 LANGUE = "FR"
 
 # Fichier audio de la voix à copier (mp3 ou wav, 10 à 30 secondes, propre,
@@ -35,34 +37,121 @@ ACCENT_ANGLAIS = "EN-Default"
 # Dossier de sortie
 DOSSIER_SORTIE = "outputs_v2"
 
+# Nom de l'environnement conda
+ENV_NAME = "openvoice"
+
 # =====================================================================
 #                  NE RIEN MODIFIER SOUS CETTE LIGNE
 # =====================================================================
 
-# On se place toujours dans le dossier du script, où qu'on le lance
-os.chdir(Path(__file__).resolve().parent)
+DOSSIER_SCRIPT = Path(__file__).resolve().parent
+
+
+def dans_le_bon_env():
+    return Path(sys.prefix).name.lower() == ENV_NAME.lower()
+
+
+def trouver_python_env():
+    """Cherche le python.exe de l'environnement openvoice."""
+    candidats = [
+        Path.home() / ".conda" / "envs" / ENV_NAME / "python.exe",
+        Path(sys.prefix) / "envs" / ENV_NAME / "python.exe",
+        Path(sys.base_prefix) / "envs" / ENV_NAME / "python.exe",
+    ]
+    conda_prefix = os.environ.get("CONDA_PREFIX")
+    if conda_prefix:
+        candidats.append(Path(conda_prefix) / "python.exe")
+    for c in candidats:
+        if c.exists() and c.parent.name.lower() == ENV_NAME.lower():
+            return c
+    return None
+
+
+def relancer_si_necessaire():
+    """Si on n'est pas dans l'environnement openvoice, on s'y relance."""
+    if dans_le_bon_env():
+        return
+    python_env = trouver_python_env()
+    if python_env is None:
+        print(f"ERREUR : environnement conda '{ENV_NAME}' introuvable.")
+        print("Créez-le avec : conda create -n openvoice python=3.9 -y")
+        sys.exit(1)
+    print(f"Mauvais Python détecté, relance avec : {python_env}\n")
+    code = subprocess.call(
+        [str(python_env), str(Path(__file__).resolve())] + sys.argv[1:]
+    )
+    sys.exit(code)
+
+
+relancer_si_necessaire()
+
+# À partir d'ici, on est sûr d'être dans l'environnement openvoice
+os.chdir(DOSSIER_SCRIPT)
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+
+
+def verifier_prerequis():
+    """Vérifie bibliothèques, GPU, modèles et données NLTK."""
+    # 1. Bibliothèques
+    requis = ["torch", "librosa", "melo", "openvoice", "nltk"]
+    manquants = [m for m in requis if importlib.util.find_spec(m) is None]
+    if manquants:
+        print(f"ERREUR : bibliothèques manquantes : {', '.join(manquants)}")
+        print("Dans le terminal (avec (openvoice) visible), installez-les :")
+        print("  pip install -e . --no-deps")
+        print("  pip install git+https://github.com/myshell-ai/MeloTTS.git")
+        sys.exit(1)
+
+    import torch
+
+    # 2. GPU
+    if torch.cuda.is_available():
+        print(f"GPU utilisé : {torch.cuda.get_device_name(0)}")
+    else:
+        print("ATTENTION : GPU non détecté, le calcul se fera sur le processeur (lent).")
+        if "+cpu" in torch.__version__:
+            print("  PyTorch est en version CPU. Pour le GPU :")
+            print("  pip uninstall torch torchaudio -y")
+            print("  pip install torch==2.8.0 torchaudio==2.8.0 "
+                  "--index-url https://download.pytorch.org/whl/cu126")
+
+    # 3. Modèles et voix de référence
+    if not Path("checkpoints_v2/converter/config.json").exists():
+        print("ERREUR : dossier checkpoints_v2 introuvable ou incomplet.")
+        sys.exit(1)
+    if not Path(VOIX_REFERENCE).exists():
+        print(f"ERREUR : fichier de voix introuvable : {VOIX_REFERENCE}")
+        sys.exit(1)
+
+    # 4. Données NLTK (téléchargées automatiquement si absentes)
+    try:
+        import nltk
+        for chemin, nom in [
+            ("taggers/averaged_perceptron_tagger_eng", "averaged_perceptron_tagger_eng"),
+            ("corpora/cmudict", "cmudict"),
+        ]:
+            try:
+                nltk.data.find(chemin)
+            except LookupError:
+                print(f"Téléchargement des données NLTK : {nom}")
+                nltk.download(nom, quiet=True)
+    except Exception as e:
+        print(f"Avertissement NLTK ignoré : {e}")
+
+    if LANGUE == "KR":
+        print("ERREUR : le coréen (KR) n'est pas pris en charge sous Windows ici.")
+        sys.exit(1)
 
 
 def main():
+    verifier_prerequis()
+
     import torch
     from openvoice import se_extractor
     from openvoice.api import ToneColorConverter
     from melo.api import TTS
 
-    # --- Vérifications de base -------------------------------------
-    if not Path(VOIX_REFERENCE).exists():
-        print(f"ERREUR : fichier de voix introuvable : {VOIX_REFERENCE}")
-        sys.exit(1)
-    if not Path("checkpoints_v2/converter/config.json").exists():
-        print("ERREUR : dossier checkpoints_v2 introuvable ou incomplet.")
-        sys.exit(1)
-
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
-    if device == "cpu":
-        print("ATTENTION : GPU non détecté, le calcul se fera sur le processeur (lent).")
-    else:
-        print(f"GPU utilisé : {torch.cuda.get_device_name(0)}")
-
     os.makedirs(DOSSIER_SORTIE, exist_ok=True)
 
     # --- Chargement du convertisseur de voix -----------------------
