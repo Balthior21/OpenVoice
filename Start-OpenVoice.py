@@ -1,12 +1,12 @@
 # pyright: reportMissingImports=false
 """
-Lanceur OpenVoice V2.
+Lanceur OpenVoice V2 - version avec affichage structuré.
 
-- Se relance automatiquement dans l'environnement conda "openvoice".
-- Cache de l'empreinte vocale, un cache par fichier de voix ; recalculé
-  automatiquement si le fichier de référence ou le checkpoint change.
+- Texte lu depuis un fichier .txt (ou depuis la variable TEXTE).
+- Affichage en étapes séparées par des lignes de #####.
+- Barre de progression globale (étapes) et barre de synthèse (phrases).
+- Cache de l'empreinte vocale, un cache par fichier de voix.
 - Analyse de la voix (Whisper) sur GPU ou processeur au choix.
-- Mesure les durées des principales étapes.
 """
 
 import importlib.util
@@ -22,13 +22,12 @@ from pathlib import Path
 # PARAMÈTRES
 # =====================================================================
 
-# Le texte que la voix doit dire
-# TEXTE = "Bonjour, ceci est un test de ma voix clonée avec OpenVoice."
-TEXTE = """Mon cavalier me fait une cour assidue et convaincante depuis le début de la soirée. Cela n'est pas pour me déplaire. Il doit avoir dix-neuf ans, tout au plus, il est donc de dix ans mon cadet.
+# Fichier texte à lire (UTF-8), chemin relatif au dossier OpenVoice.
+# Laissez "" (vide) pour utiliser la variable TEXTE ci-dessous à la place.
+TEXTE_FICHIER = "texte.txt"
 
-J'ai fait sa connaissance par l'intermédiaire de mes voisins de Mobil-Home qui me l'ont recommandé pour l'exécution de menus travaux et autres corvées ménagères. Il gagne ainsi quelque argent de poche pendant les vacances. La première fois que je l'ai prié de venir m'aider, il s'est consacré au lavage de ma voiture.
-
-D'autres fois, il a démoussé le toit de mon Mobil-Home ou lessivé ses parois extérieures ou désherbé mes parterres de fleurs."""
+# Texte utilisé seulement si TEXTE_FICHIER est vide
+TEXTE = "Bonjour, ceci est un test de ma voix clonée avec OpenVoice."
 
 # Langue du texte : "FR", "EN", "ES", "ZH" ou "JP"
 LANGUE = "FR"
@@ -66,11 +65,61 @@ UTILISER_CACHE_VOIX = True
 # =====================================================================
 
 DOSSIER_SCRIPT = Path(__file__).resolve().parent
+NB_ETAPES = 5
+LARGEUR = 72
+
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", message=".*urllib3.*")
 warnings.filterwarnings("ignore", message=".*pkg_resources.*")
+warnings.filterwarnings("ignore", message=".*stft.*")
 
+
+# ---------------------------------------------------------------------
+# Affichage
+# ---------------------------------------------------------------------
+
+def ecrire(texte=""):
+    print(texte, flush=True)
+
+
+def ligne():
+    ecrire("#" * LARGEUR)
+
+
+def titre(texte):
+    ecrire()
+    ligne()
+    ecrire(f"# {texte}")
+    ligne()
+
+
+def barre_etapes(fait, total, largeur=30):
+    plein = int(largeur * fait / total)
+    return "[" + "█" * plein + "░" * (largeur - plein) + f"] {fait}/{total}"
+
+
+def debut_etape(numero, nom):
+    titre(f"ÉTAPE {numero}/{NB_ETAPES} - {nom}")
+
+
+def fin_etape(numero, duree):
+    ecrire(f"  -> Terminé en {duree:.1f} s")
+    ecrire(f"  Progression globale : {barre_etapes(numero, NB_ETAPES)}")
+
+
+def format_duree(secondes):
+    secondes = int(round(secondes))
+    minutes, sec = divmod(secondes, 60)
+    if minutes:
+        return f"{minutes} min {sec:02d} s"
+    return f"{sec} s"
+
+
+# ---------------------------------------------------------------------
+# Relance dans le bon environnement
+# ---------------------------------------------------------------------
 
 def dans_le_bon_env():
     return Path(sys.prefix).name.lower() == ENV_NAME.lower()
@@ -80,7 +129,6 @@ def trouver_python_env():
     """Cherche le Python de l'environnement openvoice sans utiliser le Python global."""
     candidats = []
 
-    # Permet de définir explicitement le chemin si l'installation Conda est atypique.
     python_force = os.environ.get("OPENVOICE_PYTHON")
     if python_force:
         candidats.append(Path(python_force))
@@ -99,10 +147,7 @@ def trouver_python_env():
         candidats.append(Path(conda_prefix) / "python.exe")
 
     for candidat in candidats:
-        if (
-            candidat.is_file()
-            and candidat.parent.name.lower() == ENV_NAME.lower()
-        ):
+        if candidat.is_file() and candidat.parent.name.lower() == ENV_NAME.lower():
             return candidat
     return None
 
@@ -114,12 +159,12 @@ def relancer_si_necessaire():
 
     python_env = trouver_python_env()
     if python_env is None:
-        print(f"ERREUR : environnement Conda '{ENV_NAME}' introuvable.")
-        print("Vérifie le chemin avec : conda env list")
-        print("Si besoin, définis OPENVOICE_PYTHON vers le python.exe de l'environnement.")
+        ecrire(f"ERREUR : environnement Conda '{ENV_NAME}' introuvable.")
+        ecrire("Vérifie le chemin avec : conda env list")
+        ecrire("Si besoin, définis OPENVOICE_PYTHON vers le python.exe de l'environnement.")
         sys.exit(1)
 
-    print(f"Relance avec l'environnement OpenVoice : {python_env}\n")
+    ecrire(f"Relance avec l'environnement OpenVoice : {python_env}")
     resultat = subprocess.call(
         [str(python_env), str(Path(__file__).resolve()), *sys.argv[1:]],
         cwd=str(DOSSIER_SCRIPT),
@@ -130,6 +175,10 @@ def relancer_si_necessaire():
 relancer_si_necessaire()
 os.chdir(DOSSIER_SCRIPT)
 
+
+# ---------------------------------------------------------------------
+# Configuration et vérifications
+# ---------------------------------------------------------------------
 
 def configurer_vscode():
     """Configure l'interpréteur VS Code en conservant les autres réglages."""
@@ -154,10 +203,10 @@ def configurer_vscode():
             json.dumps(donnees, indent=4, ensure_ascii=False) + "\n",
             encoding="utf-8",
         )
-        print("Configuration VS Code mise à jour.")
-        print("Si nécessaire : Ctrl+Maj+P > Developer: Reload Window.\n")
+        ecrire("  Configuration VS Code mise à jour.")
+        ecrire("  Si nécessaire : Ctrl+Maj+P > Developer: Reload Window.")
     except OSError as erreur:
-        print(f"Avertissement : configuration VS Code impossible ({erreur})")
+        ecrire(f"  Avertissement : configuration VS Code impossible ({erreur})")
 
 
 def preparer_dll_gpu():
@@ -181,7 +230,6 @@ def forcer_whisper_cpu(se_extractor):
 
     class WhisperCPU(original):
         def __init__(self, model_size_or_path, *args, **kwargs):
-            # Ces options doivent primer sur d'éventuelles valeurs de l'appelant.
             kwargs.pop("device", None)
             kwargs.pop("compute_type", None)
             super().__init__(
@@ -191,40 +239,67 @@ def forcer_whisper_cpu(se_extractor):
     se_extractor.WhisperModel = WhisperCPU
 
 
+def lire_texte():
+    """Lit le texte depuis le fichier .txt, ou depuis la variable TEXTE.
+    Retourne (texte, description de la source, nom court)."""
+    if TEXTE_FICHIER:
+        chemin = Path(TEXTE_FICHIER)
+        if not chemin.is_file():
+            ecrire(f"ERREUR : fichier texte introuvable : {chemin.resolve()}")
+            ecrire("  Créez ce fichier (enregistré en UTF-8), ou videz TEXTE_FICHIER")
+            ecrire("  pour utiliser la variable TEXTE du script.")
+            sys.exit(1)
+        texte = None
+        for encodage in ("utf-8-sig", "cp1252"):
+            try:
+                texte = chemin.read_text(encoding=encodage)
+                break
+            except UnicodeDecodeError:
+                continue
+        if texte is None:
+            texte = chemin.read_text(encoding="utf-8", errors="replace")
+        source, nom = str(chemin), chemin.stem
+    else:
+        texte, source, nom = TEXTE, "variable TEXTE du script", "texte"
+
+    texte = texte.strip()
+    if not texte:
+        ecrire("ERREUR : le texte à lire est vide.")
+        sys.exit(1)
+    return texte, source, nom
+
+
 def verifier_prerequis():
     """Vérifie les bibliothèques, le GPU, les checkpoints et les données NLTK."""
-    requis = ["torch", "librosa", "melo", "openvoice", "nltk"]
-    manquants = [
-        nom for nom in requis
-        if importlib.util.find_spec(nom) is None
-    ]
+    requis = ["torch", "librosa", "melo", "openvoice", "nltk", "tqdm"]
+    manquants = [nom for nom in requis if importlib.util.find_spec(nom) is None]
     if manquants:
-        print(f"ERREUR : bibliothèques manquantes : {', '.join(manquants)}")
-        print("Dans le terminal de l'environnement (openvoice) :")
-        print("  pip install -e . --no-deps")
-        print("  pip install git+https://github.com/myshell-ai/MeloTTS.git")
+        ecrire(f"ERREUR : bibliothèques manquantes : {', '.join(manquants)}")
+        ecrire("Dans le terminal de l'environnement (openvoice) :")
+        ecrire("  pip install -e . --no-deps")
+        ecrire("  pip install git+https://github.com/myshell-ai/MeloTTS.git")
         sys.exit(1)
 
     import torch
 
     if torch.cuda.is_available():
-        print(f"GPU utilisé : {torch.cuda.get_device_name(0)}")
+        ecrire(f"  GPU            : {torch.cuda.get_device_name(0)}")
     else:
-        print("ATTENTION : GPU non détecté, le calcul se fera sur le processeur (lent).")
+        ecrire("  ATTENTION : GPU non détecté, le calcul se fera sur le processeur (lent).")
         if "+cpu" in torch.__version__:
-            print("PyTorch installé en version CPU. Pour le GPU :")
-            print("  pip uninstall torch torchaudio -y")
-            print("  pip install torch==2.8.0 torchaudio==2.8.0 "
-                  "--index-url https://download.pytorch.org/whl/cu126")
+            ecrire("  PyTorch installé en version CPU. Pour le GPU :")
+            ecrire("    pip uninstall torch torchaudio -y")
+            ecrire("    pip install torch==2.8.0 torchaudio==2.8.0 "
+                   "--index-url https://download.pytorch.org/whl/cu126")
 
     if not Path("checkpoints_v2/converter/config.json").is_file():
-        print("ERREUR : checkpoints_v2/converter/config.json introuvable.")
+        ecrire("ERREUR : checkpoints_v2/converter/config.json introuvable.")
         sys.exit(1)
     if not Path("checkpoints_v2/converter/checkpoint.pth").is_file():
-        print("ERREUR : checkpoints_v2/converter/checkpoint.pth introuvable.")
+        ecrire("ERREUR : checkpoints_v2/converter/checkpoint.pth introuvable.")
         sys.exit(1)
     if not Path(VOIX_REFERENCE).is_file():
-        print(f"ERREUR : fichier de voix introuvable : {VOIX_REFERENCE}")
+        ecrire(f"ERREUR : fichier de voix introuvable : {VOIX_REFERENCE}")
         sys.exit(1)
 
     try:
@@ -236,15 +311,19 @@ def verifier_prerequis():
             try:
                 nltk.data.find(chemin)
             except LookupError:
-                print(f"Téléchargement des données NLTK : {nom}")
+                ecrire(f"  Téléchargement des données NLTK : {nom}")
                 nltk.download(nom, quiet=True)
     except Exception as erreur:
-        print(f"Avertissement NLTK ignoré : {erreur}")
+        ecrire(f"  Avertissement NLTK ignoré : {erreur}")
 
     if LANGUE == "KR":
-        print("ERREUR : le coréen (KR) n'est pas pris en charge sous Windows ici.")
+        ecrire("ERREUR : le coréen (KR) n'est pas pris en charge sous Windows ici.")
         sys.exit(1)
 
+
+# ---------------------------------------------------------------------
+# Empreinte vocale (avec cache)
+# ---------------------------------------------------------------------
 
 def signature_fichier(chemin):
     """Signature légère : chemin, taille et date de modification."""
@@ -277,22 +356,20 @@ def charger_ou_calculer_empreinte(se_extractor, converter, torch, device, analys
         try:
             meta = json.loads(meta_file.read_text(encoding="utf-8"))
             if meta == signature:
-                # weights_only est disponible dans les versions récentes de PyTorch.
                 try:
                     donnees = torch.load(cache_file, map_location=device, weights_only=True)
                 except TypeError:
                     donnees = torch.load(cache_file, map_location=device)
-                empreinte = donnees["target_se"]
-                print("Empreinte vocale chargée depuis le cache (analyse Whisper évitée).")
-                return empreinte
+                ecrire("  Empreinte vocale chargée depuis le cache (analyse évitée).")
+                return donnees["target_se"]
         except Exception as erreur:
-            print(f"Cache vocal inutilisable, recalcul de l'empreinte ({erreur}).")
+            ecrire(f"  Cache vocal inutilisable, recalcul de l'empreinte ({erreur}).")
 
-    print(f"Analyse de la voix de référence : {VOIX_REFERENCE}")
+    ecrire(f"  Analyse de la voix : {VOIX_REFERENCE}")
     if analyse_gpu:
-        print("(Whisper sur le GPU.)")
+        ecrire("  (Whisper sur le GPU)")
     else:
-        print("(Whisper sur le processeur : la première analyse peut être longue.)")
+        ecrire("  (Whisper sur le processeur : la première analyse peut être longue)")
     empreinte, _ = se_extractor.get_se(str(reference), converter, vad=False)
 
     if UTILISER_CACHE_VOIX:
@@ -303,24 +380,58 @@ def charger_ou_calculer_empreinte(se_extractor, converter, torch, device, analys
                 json.dumps(signature, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
-            print("Empreinte vocale mise en cache pour les prochaines générations.")
+            ecrire("  Empreinte vocale mise en cache pour les prochaines générations.")
         except Exception as erreur:
-            print(f"Avertissement : impossible d'enregistrer le cache vocal ({erreur}).")
+            ecrire(f"  Avertissement : impossible d'enregistrer le cache vocal ({erreur}).")
 
     return empreinte.to(device) if hasattr(empreinte, "to") else empreinte
 
 
+def duree_audio(chemin):
+    """Durée en secondes d'un fichier audio, ou None si illisible."""
+    try:
+        import soundfile as sf
+        return sf.info(str(chemin)).duration
+    except Exception:
+        return None
+
+
+# ---------------------------------------------------------------------
+# Programme principal
+# ---------------------------------------------------------------------
+
 def main():
     debut_total = time.perf_counter()
+    durees = {}
+
+    # =================== ÉTAPE 1 : vérifications ====================
+    debut_etape(1, "Vérifications et préparation")
+    chrono = time.perf_counter()
     configurer_vscode()
     verifier_prerequis()
+    texte, source_texte, nom_texte = lire_texte()
+
+    nb_mots = len(texte.split())
+    nb_paragraphes = len([p for p in texte.split("\n") if p.strip()])
+    ecrire(f"  Voix de réf.   : {VOIX_REFERENCE}")
+    ecrire(f"  Langue         : {LANGUE}")
+    ecrire(f"  Vitesse        : {VITESSE}")
+    ecrire(f"  Texte (source) : {source_texte}")
+    ecrire(f"  Texte (taille) : {len(texte)} caractères, {nb_mots} mots, "
+           f"{nb_paragraphes} paragraphe(s)")
 
     import torch
+    from tqdm import tqdm
     from openvoice import se_extractor
     from openvoice.api import ToneColorConverter
     from melo.api import TTS
 
-    # Whisper : GPU (avec les DLL de PyTorch) ou processeur
+    try:
+        import transformers
+        transformers.logging.set_verbosity_error()
+    except Exception:
+        pass
+
     analyse_gpu = WHISPER_SUR_GPU and torch.cuda.is_available()
     if analyse_gpu:
         preparer_dll_gpu()
@@ -329,47 +440,70 @@ def main():
 
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     Path(DOSSIER_SORTIE).mkdir(parents=True, exist_ok=True)
+    durees["Vérifications"] = time.perf_counter() - chrono
+    fin_etape(1, durees["Vérifications"])
 
-    # Chargement du convertisseur de voix
+    # =================== ÉTAPE 2 : convertisseur ====================
+    debut_etape(2, "Chargement du convertisseur de voix")
     chrono = time.perf_counter()
-    print("Chargement du convertisseur de voix...")
     ckpt_converter = Path("checkpoints_v2/converter")
     converter = ToneColorConverter(str(ckpt_converter / "config.json"), device=device)
     converter.load_ckpt(str(ckpt_converter / "checkpoint.pth"))
-    print(f"Convertisseur chargé en {time.perf_counter() - chrono:.1f} s.")
+    durees["Convertisseur"] = time.perf_counter() - chrono
+    fin_etape(2, durees["Convertisseur"])
 
-    # Analyse ou chargement de l'empreinte de référence (mise en cache)
+    # =================== ÉTAPE 3 : empreinte vocale =================
+    debut_etape(3, "Empreinte de la voix de référence")
     chrono = time.perf_counter()
     target_se = charger_ou_calculer_empreinte(
         se_extractor, converter, torch, device, analyse_gpu
     )
-    print(f"Empreinte prête en {time.perf_counter() - chrono:.1f} s.")
+    durees["Empreinte vocale"] = time.perf_counter() - chrono
+    fin_etape(3, durees["Empreinte vocale"])
 
-    # Synthèse de la voix de base
+    # =================== ÉTAPE 4 : synthèse vocale ==================
+    debut_etape(4, f"Synthèse vocale de base ({LANGUE})")
     chrono = time.perf_counter()
-    print(f"Génération de la voix de base ({LANGUE})...")
     tts = TTS(language=LANGUE, device=device)
     speakers = tts.hps.data.spk2id
     cle = ACCENT_ANGLAIS if LANGUE == "EN" else LANGUE
 
     if cle not in speakers:
-        print(f"ERREUR : voix '{cle}' inconnue. Voix disponibles : {list(speakers.keys())}")
+        ecrire(f"ERREUR : voix '{cle}' inconnue. Voix disponibles : {list(speakers.keys())}")
         sys.exit(1)
 
     nom_se = cle.lower().replace("_", "-")
     fichier_source_se = Path("checkpoints_v2/base_speakers/ses") / f"{nom_se}.pth"
     if not fichier_source_se.is_file():
-        print(f"ERREUR : empreinte du locuteur source introuvable : {fichier_source_se}")
+        ecrire(f"ERREUR : empreinte du locuteur source introuvable : {fichier_source_se}")
         sys.exit(1)
 
     horodatage = time.strftime("%Y%m%d_%H%M%S")
     tmp_path = Path(DOSSIER_SORTIE) / f"tmp_{horodatage}_{os.getpid()}.wav"
-    sortie = Path(DOSSIER_SORTIE) / f"voix_{LANGUE.lower()}_{horodatage}.wav"
+    sortie = Path(DOSSIER_SORTIE) / f"voix_{nom_texte}_{LANGUE.lower()}_{horodatage}.wav"
+
+    def barre_phrases(elements):
+        return tqdm(
+            elements,
+            desc="  Synthèse",
+            unit="phrase",
+            file=sys.stdout,
+            bar_format="{desc} {percentage:3.0f}%|{bar:30}| {n_fmt}/{total_fmt} "
+                       "[{elapsed}<{remaining}]",
+        )
 
     try:
-        tts.tts_to_file(TEXTE, speakers[cle], str(tmp_path), speed=VITESSE)
-        print(f"Synthèse terminée en {time.perf_counter() - chrono:.1f} s.")
+        try:
+            tts.tts_to_file(texte, speakers[cle], str(tmp_path), speed=VITESSE,
+                            pbar=barre_phrases, quiet=True)
+        except TypeError:
+            # Version de MeloTTS sans options pbar/quiet : barre intégrée.
+            tts.tts_to_file(texte, speakers[cle], str(tmp_path), speed=VITESSE)
+        durees["Synthèse"] = time.perf_counter() - chrono
+        fin_etape(4, durees["Synthèse"])
 
+        # =================== ÉTAPE 5 : conversion ===================
+        debut_etape(5, "Conversion vers la voix de référence")
         chrono = time.perf_counter()
         try:
             source_se = torch.load(
@@ -378,7 +512,7 @@ def main():
         except TypeError:
             source_se = torch.load(str(fichier_source_se), map_location=device)
 
-        print("Conversion vers la voix de référence...")
+        ecrire("  Conversion en cours (cette étape n'a pas de barre propre)...")
         converter.convert(
             audio_src_path=str(tmp_path),
             src_se=source_se,
@@ -386,18 +520,36 @@ def main():
             output_path=str(sortie),
             message="@MyShell",
         )
-        print(f"Conversion terminée en {time.perf_counter() - chrono:.1f} s.")
+        durees["Conversion"] = time.perf_counter() - chrono
+        fin_etape(5, durees["Conversion"])
     finally:
         try:
             if tmp_path.exists():
                 tmp_path.unlink()
         except OSError as erreur:
-            print(f"Avertissement : impossible de supprimer le fichier temporaire : {erreur}")
+            ecrire(f"  Avertissement : impossible de supprimer le fichier temporaire : {erreur}")
 
-    print("\nTERMINÉ !")
-    print(f"Fichier créé : {sortie.resolve()}")
-    print(f"Durée totale : {time.perf_counter() - debut_total:.1f} s.")
+    # =================== RÉSUMÉ FINAL ===============================
+    total = time.perf_counter() - debut_total
+    longueur_audio = duree_audio(sortie)
+
+    titre("TERMINÉ")
+    ecrire(f"  Fichier créé   : {sortie.resolve()}")
+    if longueur_audio is not None:
+        ecrire(f"  Durée audio    : {format_duree(longueur_audio)}")
+    ecrire(f"  Temps total    : {format_duree(total)}")
+    ecrire()
+    ecrire("  Détail des étapes :")
+    for nom, valeur in durees.items():
+        ecrire(f"    - {nom:<18} {valeur:6.1f} s")
+    ecrire()
+    ecrire(f"  Progression globale : {barre_etapes(NB_ETAPES, NB_ETAPES)}")
+    ligne()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        ecrire("\nInterrompu par l'utilisateur.")
+        sys.exit(130)
