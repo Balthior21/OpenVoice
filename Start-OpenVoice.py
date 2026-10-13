@@ -1,14 +1,12 @@
 # pyright: reportMissingImports=false
 """
-Lanceur OpenVoice V2 optimisé.
+Lanceur OpenVoice V2.
 
-Optimisation principale :
-- met en cache l'empreinte vocale de la voix de référence ;
-- la recalcule automatiquement si le fichier de référence ou le checkpoint change ;
-- conserve le moteur OpenVoice / MeloTTS / PyTorch en Python ;
-- mesure les durées des principales étapes.
-
-Le cache ne remplace pas les modèles et ne change pas le rendu vocal attendu.
+- Se relance automatiquement dans l'environnement conda "openvoice".
+- Cache de l'empreinte vocale, un cache par fichier de voix ; recalculé
+  automatiquement si le fichier de référence ou le checkpoint change.
+- Analyse de la voix (Whisper) sur GPU ou processeur au choix.
+- Mesure les durées des principales étapes.
 """
 
 import importlib.util
@@ -21,7 +19,7 @@ import warnings
 from pathlib import Path
 
 # =====================================================================
-# PARAMÈTRES — valeurs originales conservées
+# PARAMÈTRES
 # =====================================================================
 
 # Le texte que la voix doit dire
@@ -46,6 +44,13 @@ VITESSE = 1.0
 
 # Seulement si LANGUE = "EN" : "EN-Default", "EN-US", "EN-BR", "EN_INDIA", "EN-AU"
 ACCENT_ANGLAIS = "EN-Default"
+
+# Analyse de la voix de référence (Whisper) :
+#   True  = sur le GPU (rapide). Nécessite ctranslate2 version 4.
+#   False = sur le processeur (plus lent, mais fonctionne toujours).
+# Si le script se ferme brutalement avec une erreur "cudnn ... .dll",
+# mettez False.
+WHISPER_SUR_GPU = True
 
 # Dossier de sortie
 DOSSIER_SORTIE = "outputs_v2"
@@ -155,13 +160,28 @@ def configurer_vscode():
         print(f"Avertissement : configuration VS Code impossible ({erreur})")
 
 
+def preparer_dll_gpu():
+    """Rend visibles les bibliothèques CUDA fournies avec PyTorch
+    (utiles à ctranslate2 version 4)."""
+    try:
+        import torch
+        dossier_lib = Path(torch.__file__).resolve().parent / "lib"
+        if dossier_lib.exists():
+            os.add_dll_directory(str(dossier_lib))
+            os.environ["PATH"] = (
+                str(dossier_lib) + os.pathsep + os.environ.get("PATH", "")
+            )
+    except Exception:
+        pass
+
+
 def forcer_whisper_cpu(se_extractor):
-    """Force seulement Whisper sur CPU pour contourner certains problèmes cuDNN Windows."""
+    """Force Whisper sur CPU pour contourner les problèmes cuDNN sous Windows."""
     original = se_extractor.WhisperModel
 
     class WhisperCPU(original):
         def __init__(self, model_size_or_path, *args, **kwargs):
-            # Ces options doivent primer sur d'éventuelles valeurs passées par l'appelant.
+            # Ces options doivent primer sur d'éventuelles valeurs de l'appelant.
             kwargs.pop("device", None)
             kwargs.pop("compute_type", None)
             super().__init__(
@@ -192,7 +212,10 @@ def verifier_prerequis():
     else:
         print("ATTENTION : GPU non détecté, le calcul se fera sur le processeur (lent).")
         if "+cpu" in torch.__version__:
-            print("PyTorch installé en version CPU. Vérifie l'installation CUDA de cet environnement.")
+            print("PyTorch installé en version CPU. Pour le GPU :")
+            print("  pip uninstall torch torchaudio -y")
+            print("  pip install torch==2.8.0 torchaudio==2.8.0 "
+                  "--index-url https://download.pytorch.org/whl/cu126")
 
     if not Path("checkpoints_v2/converter/config.json").is_file():
         print("ERREUR : checkpoints_v2/converter/config.json introuvable.")
@@ -234,16 +257,16 @@ def signature_fichier(chemin):
     }
 
 
-def charger_ou_calculer_empreinte(se_extractor, converter, torch, device):
+def charger_ou_calculer_empreinte(se_extractor, converter, torch, device, analyse_gpu):
     """
-    Réutilise l'empreinte vocale enregistrée.
+    Réutilise l'empreinte vocale enregistrée (un cache par fichier de voix).
     Elle est recalculée si l'audio de référence ou le checkpoint change.
     """
     reference = Path(VOIX_REFERENCE)
     checkpoint = Path("checkpoints_v2/converter/checkpoint.pth")
     cache_dir = Path(DOSSIER_SORTIE) / "cache"
-    cache_file = cache_dir / "empreinte_voix_reference.pth"
-    meta_file = cache_dir / "empreinte_voix_reference.json"
+    cache_file = cache_dir / f"empreinte_{reference.stem}.pth"
+    meta_file = cache_dir / f"empreinte_{reference.stem}.json"
 
     signature = {
         "reference": signature_fichier(reference),
@@ -266,7 +289,10 @@ def charger_ou_calculer_empreinte(se_extractor, converter, torch, device):
             print(f"Cache vocal inutilisable, recalcul de l'empreinte ({erreur}).")
 
     print(f"Analyse de la voix de référence : {VOIX_REFERENCE}")
-    print("(Whisper fonctionne sur le processeur ; première analyse potentiellement longue.)")
+    if analyse_gpu:
+        print("(Whisper sur le GPU.)")
+    else:
+        print("(Whisper sur le processeur : la première analyse peut être longue.)")
     empreinte, _ = se_extractor.get_se(str(reference), converter, vad=False)
 
     if UTILISER_CACHE_VOIX:
@@ -294,7 +320,13 @@ def main():
     from openvoice.api import ToneColorConverter
     from melo.api import TTS
 
-    forcer_whisper_cpu(se_extractor)
+    # Whisper : GPU (avec les DLL de PyTorch) ou processeur
+    analyse_gpu = WHISPER_SUR_GPU and torch.cuda.is_available()
+    if analyse_gpu:
+        preparer_dll_gpu()
+    else:
+        forcer_whisper_cpu(se_extractor)
+
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     Path(DOSSIER_SORTIE).mkdir(parents=True, exist_ok=True)
 
@@ -308,7 +340,9 @@ def main():
 
     # Analyse ou chargement de l'empreinte de référence (mise en cache)
     chrono = time.perf_counter()
-    target_se = charger_ou_calculer_empreinte(se_extractor, converter, torch, device)
+    target_se = charger_ou_calculer_empreinte(
+        se_extractor, converter, torch, device, analyse_gpu
+    )
     print(f"Empreinte prête en {time.perf_counter() - chrono:.1f} s.")
 
     # Synthèse de la voix de base
